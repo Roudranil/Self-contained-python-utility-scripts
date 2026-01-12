@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import os
 import sys
 from typing import Optional
 
-from loguru import Logger
+import loguru
+from loguru import logger
 
 
 def create_logger(
@@ -13,7 +16,7 @@ def create_logger(
     level: str = "DEBUG",
     *file_args,
     **file_kwargs,
-) -> Logger:
+) -> loguru.Logger:
     """Instantiates a logging object with loguru and returns that.
     - Time format: hh:mm AM/PM
     - Date/time and logger name: white dim
@@ -36,9 +39,8 @@ def create_logger(
         *file_args, **file_kwargs: more optional arguments to be passed to the file sink
 
     Returns:
-        Logger: logging object
+        logger: logging object
     """
-    logger = Logger()
     logger.remove()
 
     fmt = format or (
@@ -59,9 +61,14 @@ def create_logger(
     for lvl, style in styles.items():
         logger.level(lvl, color=style)
 
-    logger.add(sys.stderr, format=fmt, level=level, colorize=True)
+    logger.add(sys.stderr, format=fmt, level=level, colorize=True, backtrace=False)
     logger.add(
-        os.path.join(path, filename), format=fmt, level=level, *file_args, **file_kwargs
+        os.path.join(path, filename),
+        format=fmt,
+        level=level,
+        backtrace=False,
+        *file_args,
+        **file_kwargs,
     )
 
     return logger

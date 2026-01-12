@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import gc
 import inspect
 import os
@@ -6,12 +8,12 @@ import time
 import traceback
 from typing import List, Optional, Union
 
+import loguru
 import psutil
 import torch
-from loguru import Logger
 
 
-def clean_mem(logger: Optional[Logger] = None) -> None:
+def clean_mem(logger: Optional[loguru.Logger] = None) -> None:
     process = psutil.Process(os.getpid())
 
     # Measure RAM before cleanup
@@ -104,7 +106,7 @@ def free_vars(
     vars_to_delete: List[Union[str, object]],
     namespace: Optional[dict] = None,
     try_gpu: bool = True,
-    logger: Optional[Logger] = None,  # type: ignore
+    logger: Optional[loguru.Logger] = None,  # type: ignore
 ):
     """
     Deletes variables by name or reference, frees RAM and GPU (PyTorch) memory,
@@ -181,4 +183,5 @@ def free_vars(
     freed_ram_bytes = after_ram - before_ram
     logger(f"RAM memory freed: {freed_ram_bytes / (1024**2):.2f} MB")
     clean_mem()
+    # return freed_ram_bytes, freed_gpu_bytes
     # return freed_ram_bytes, freed_gpu_bytes
