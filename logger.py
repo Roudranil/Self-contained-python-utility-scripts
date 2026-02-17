@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from logging import Logger
 from pathlib import Path
 from typing import Optional, Union
 
@@ -18,13 +19,13 @@ def create_logger(
     compression: str = "zip",
     enqueue: bool = True,
     diagnose: bool = False,
-) -> _logger.__class__:
+) -> Logger:
     """configure and return a production-grade loguru logger.
     provides structured logging, rotation, multiprocessing safety, and clean console output suitable for pipelines.
 
     Args:
         log_dir (Optional[PathLike], optional): directory where logs are stored. Defaults to "logs".
-        level (str, optional): base log level. Defaults to "INFO".
+        level (str, optional): base log level. Only applies to stdout. Defaults to "INFO".
         dev_mode (bool, optional): enable trace/debug in console. Defaults to False.
         rotation (str, optional): file rotation policy. Defaults to "10 MB".
         retention (str, optional): log retention policy. Defaults to "14 days".
@@ -74,6 +75,7 @@ def create_logger(
         sys.stdout,
         filter=lambda r: r["level"].name in stdout_levels,
         format=console_fmt,
+        level=level,
         colorize=True,
         enqueue=enqueue,
         backtrace=False,
@@ -137,8 +139,11 @@ def create_logger(
         )
 
     # ensure caller module is reported correctly
-    class _LoggerProxy:
-        def __getattr__(self, name):
-            return _logger.opt(depth=1).__getattr__(name)
+    class LoggerProxy:
+        def __init__(self, base):
+            self._base = base
 
-    return _LoggerProxy()
+        def __getattr__(self, name):
+            return getattr(self._base.opt(depth=1), name)
+
+    return LoggerProxy(_logger)
