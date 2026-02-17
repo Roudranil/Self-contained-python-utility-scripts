@@ -1,74 +1,144 @@
 from __future__ import annotations
 
-import os
 import sys
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Union
 
-import loguru
-from loguru import logger
+from loguru import logger as _logger
+
+PathLike = Union[str, Path]
 
 
 def create_logger(
-    name: str = "loggy",
-    path: str = "./",
-    filename: str = "logfile.log",
-    format: Optional[str] = None,
-    level: str = "DEBUG",
-    *file_args,
-    **file_kwargs,
-) -> loguru.Logger:
-    """Instantiates a logging object with loguru and returns that.
-    - Time format: hh:mm AM/PM
-    - Date/time and logger name: white dim
-    - Level colors:
-        TRACE    -> white dim
-        DEBUG    -> white
-        INFO     -> blue
-        SUCCESS  -> green bold
-        WARNING  -> yellow
-        ERROR    -> red bold
-        CRITICAL -> red bold underline
-    - Extra file sink arguments are forwarded via *file_args/**file_kwargs.
+    log_dir: Optional[PathLike] = "logs",
+    level: str = "INFO",
+    dev_mode: bool = False,
+    rotation: str = "10 MB",
+    retention: str = "14 days",
+    compression: str = "zip",
+    enqueue: bool = True,
+    diagnose: bool = False,
+) -> _logger.__class__:
+    """configure and return a production-grade loguru logger.
+    provides structured logging, rotation, multiprocessing safety, and clean console output suitable for pipelines.
 
     Args:
-        name (str, optional): the name of the logging object. Defaults to "loggy".
-        path (str, optional): the path where the log file will be saved. Defaults to "./".
-        filename (str, optional): the filename of the log file. Defaults to "logfile.log".
-        format (str, optional): the format of the logging messages. Defaults to None.
-        level (str, optional): the level of logging. Defaults to "DEBUG"
-        *file_args, **file_kwargs: more optional arguments to be passed to the file sink
+        log_dir (Optional[PathLike], optional): directory where logs are stored. Defaults to "logs".
+        level (str, optional): base log level. Defaults to "INFO".
+        dev_mode (bool, optional): enable trace/debug in console. Defaults to False.
+        rotation (str, optional): file rotation policy. Defaults to "10 MB".
+        retention (str, optional): log retention policy. Defaults to "14 days".
+        compression (str, optional): compression for rotated logs. Defaults to "zip".
+        enqueue (bool, optional): queue logs for multiprocessing safety. Defaults to True.
+        diagnose (bool, optional): include variable values in tracebacks. Defaults to False.
 
     Returns:
-        logger: logging object
+        logger: configured logger proxy
     """
-    logger.remove()
+    _logger.remove()
 
-    fmt = format or (
-        "<white><dim>{time:%I:%M %p}</dim></white> | "
-        "<white><dim>{name:<8}</dim></white> | "
+    # level styling for console readability
+    level_styles = {
+        "TRACE": {"color": "<white><dim>"},
+        "DEBUG": {"color": "<white>"},
+        "INFO": {"color": "<blue>"},
+        "SUCCESS": {"color": "<green><bold>"},
+        "WARNING": {"color": "<yellow>"},
+        "ERROR": {"color": "<red><bold>"},
+        "CRITICAL": {"color": "<bg red><fg black><bold>"},
+    }
+    for name, style in level_styles.items():
+        _logger.level(name, **style)
+
+    # console log format
+    console_fmt = (
+        "<white><dim>{time:%I:%M %p %z}</dim></white> | "
+        "<white><dim>{module:<10}</dim></white> | "
         "<level>{level:<9}</level> | <level>{message}</level>"
     )
-
-    styles = {
-        "TRACE": "<white><dim>",
-        "DEBUG": "<white><normal>",
-        "INFO": "<blue><normal>",
-        "SUCCESS": "<green><bold>",
-        "WARNING": "<yellow><normal>",
-        "ERROR": "<red><bold>",
-        "CRITICAL": "<bg red><fg black><bold>",
-    }
-    for lvl, style in styles.items():
-        logger.level(lvl, color=style)
-
-    logger.add(sys.stderr, format=fmt, level=level, colorize=True, backtrace=False)
-    logger.add(
-        os.path.join(path, filename),
-        format=fmt,
-        level=level,
-        backtrace=False,
-        *file_args,
-        **file_kwargs,
+    # file log format
+    file_fmt = (
+        "{time:YYYY-MM-DD HH:mm:ss.SSS Z} | {level:<9} | {module:<12} | {message}"
     )
 
-    return logger
+    if log_dir:
+        Path(log_dir).mkdir(parents=True, exist_ok=True)
+
+    # stdout: operational output
+    # in case dev mode is enabled
+    # also log debug and trace
+    stdout_levels = {"INFO", "SUCCESS"}
+    if dev_mode:
+        stdout_levels |= {"DEBUG", "TRACE"}
+    _logger.add(
+        sys.stdout,
+        filter=lambda r: r["level"].name in stdout_levels,
+        format=console_fmt,
+        colorize=True,
+        enqueue=enqueue,
+        backtrace=False,
+        diagnose=diagnose,
+    )
+    # stderr: problems & diagnostics
+    _logger.add(
+        sys.stderr,
+        level="WARNING",
+        format=console_fmt,
+        colorize=True,
+        enqueue=enqueue,
+        backtrace=True,
+        diagnose=diagnose,
+    )
+
+    if log_dir:
+        # warning+ structured logs (alerts, monitoring)
+        _logger.add(
+            Path(log_dir) / "warning_plus.jsonl",
+            level="WARNING",
+            serialize=True,
+            rotation=rotation,
+            retention=retention,
+            compression=compression,
+            enqueue=enqueue,
+        )
+
+        # info+ structured logs (analytics & ops)
+        _logger.add(
+            Path(log_dir) / "info_plus.jsonl",
+            level="INFO",
+            serialize=True,
+            rotation=rotation,
+            retention=retention,
+            compression=compression,
+            enqueue=enqueue,
+        )
+
+        # trace/debug developer logs
+        _logger.add(
+            Path(log_dir) / "trace_debug.log",
+            level="TRACE",
+            filter=lambda r: r["level"].name in {"TRACE", "DEBUG"},
+            format=file_fmt,
+            rotation=rotation,
+            retention=retention,
+            compression=compression,
+            enqueue=enqueue,
+        )
+
+        # full audit trail
+        _logger.add(
+            Path(log_dir) / "all.log",
+            level="TRACE",
+            format=file_fmt,
+            rotation=rotation,
+            retention=retention,
+            compression=compression,
+            enqueue=enqueue,
+        )
+
+    # ensure caller module is reported correctly
+    class _LoggerProxy:
+        def __getattr__(self, name):
+            return _logger.opt(depth=1).__getattr__(name)
+
+    return _LoggerProxy()
